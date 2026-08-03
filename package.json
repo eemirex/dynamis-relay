@@ -1,0 +1,35 @@
+{
+  "name": "dynamis-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "An AI-native customer support operations platform built for reliable, human-controlled service.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@supabase/ssr": "0.12.3",
+    "@supabase/supabase-js": "2.110.9",
+    "lucide-react": "1.27.0",
+    "next": "16.2.12",
+    "openai": "5.20.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.12",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  },
+  "packageManager": "pnpm@10.12.1"
+}
