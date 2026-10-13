@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   Activity, AlertCircle, ArrowLeft, ArrowRight, BarChart3, Bell, BookOpen, Bot, Check, CheckCircle2,
   ChevronDown, ChevronRight, CircleGauge, Clock3, Command, Copy, Ellipsis, ExternalLink,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { activities, automationRules, knowledgeArticles, tickets as initialTickets, type Ticket, type TicketStatus } from "@/data/demo";
 import { canTransition } from "@/lib/reliability/state-machine";
+import { createDemoTicket, demoReply, draftReducer } from "@/lib/support/demo-workspace";
 
 type View = "overview" | "inbox" | "queues" | "knowledge" | "customers" | "analytics" | "automations" | "reliability";
 const nav: { view: View; label: string; icon: typeof Inbox; badge?: string }[] = [
@@ -44,8 +45,12 @@ export function RelayWorkspace() {
   const [activeId, setActiveId] = useState(initialTickets[0].id);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(true);
-  const [drafting, setDrafting] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [drafts, dispatchDraft] = useReducer(draftReducer, {});
+  const draftTimers = useRef(new Set<number>());
+  useEffect(() => {
+    const timers = draftTimers.current;
+    return () => { timers.forEach((timer) => window.clearTimeout(timer)); timers.clear(); };
+  }, []);
   const [toast, setToast] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [newTicketOpen, setNewTicketOpen] = useState(false);
@@ -53,19 +58,48 @@ export function RelayWorkspace() {
   const [rules, setRules] = useState(automationRules);
   const activeTicket = ticketList.find((ticket) => ticket.id === activeId) ?? ticketList[0];
 
-  const selectTicket = (ticket: Ticket) => { setActiveId(ticket.id); setView("inbox"); setMobileOpen(false); setDraft(""); };
+  const draft = drafts[activeId]?.text ?? "";
+  const drafting = Boolean(drafts[activeId]?.requestId);
+  const setDraft = (text: string) => dispatchDraft({ type: "edit", ticketId: activeId, text });
+  const selectTicket = (ticket: Ticket) => { setActiveId(ticket.id); setView("inbox"); setMobileOpen(false); };
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2800); };
+  const createTicket = (form: FormData) => {
+    const ticket = createDemoTicket({
+      customer: String(form.get("customer") ?? ""),
+      company: String(form.get("company") ?? ""),
+      subject: String(form.get("subject") ?? ""),
+      message: String(form.get("message") ?? ""),
+      priority: String(form.get("priority") ?? "normal") as Ticket["priority"],
+      channel: String(form.get("channel") ?? "email") as Ticket["channel"],
+      assignee: String(form.get("assignee") ?? "Unassigned"),
+    }, ticketList);
+    setTicketList((current) => [ticket, ...current]);
+    selectTicket(ticket);
+    setNewTicketOpen(false);
+    setCopilotOpen(false);
+    notify(`Demo ticket ${ticket.id} created`);
+  };
   const generateDraft = () => {
-    setDrafting(true); setDraft("");
-    window.setTimeout(() => {
-      setDraft("Hi Amara — I found the export job and confirmed it is failing during regional entity consolidation. I’ve restarted the job with that step isolated, and I’m monitoring it now. You should have the completed finance report within 15 minutes. I’ll send the download link here as soon as it is ready.");
-      setDrafting(false);
+    const ticket = activeTicket;
+    const requestId = crypto.randomUUID();
+    dispatchDraft({ type: "start", ticketId: ticket.id, requestId });
+    const timer = window.setTimeout(() => {
+      dispatchDraft({ type: "generated", ticketId: ticket.id, requestId, text: demoReply(ticket) });
+      draftTimers.current.delete(timer);
     }, 850);
+    draftTimers.current.add(timer);
   };
   const sendDraft = () => {
-    if (!draft.trim()) return;
-    setTicketList((current) => current.map((ticket) => ticket.id === activeId ? { ...ticket, messages: [...ticket.messages, { id: `m-${Date.now()}`, author: "Emmanuel", role: "agent" as const, body: draft, time: "Now" }] } : ticket));
-    setDraft(""); notify("Reply sent and added to the audit history");
+    const body = draft.trim();
+    if (!body || drafting) return;
+    const ticketId = activeId;
+    const messageId = crypto.randomUUID();
+    setTicketList((current) => current.map((ticket) => ticket.id === ticketId ? {
+      ...ticket, updated: "Now", preview: body,
+      messages: [...ticket.messages, { id: messageId, author: "Emmanuel", role: "agent" as const, body, time: "Now" }],
+    } : ticket));
+    dispatchDraft({ type: "clear", ticketId });
+    notify("Reply added to this demo conversation — no external message sent");
   };
   const changeStatus = (next: TicketStatus) => {
     if (!canTransition(activeTicket.status, next)) { notify(`Transition from ${statusLabel[activeTicket.status]} to ${statusLabel[next]} is not allowed`); return; }
@@ -77,7 +111,7 @@ export function RelayWorkspace() {
       <aside className={`relay-sidebar ${mobileOpen ? "open" : ""}`}>
         <div className="sidebar-brand"><Link href="/" className="relay-brand"><span className="relay-mark"><Radio size={14}/></span><strong>Dynamis</strong><span>Relay</span></Link><button aria-label="Close menu" onClick={() => setMobileOpen(false)}><X size={16}/></button></div>
         <button className="workspace-picker"><span>N</span><div><strong>Northstar</strong><small>Support workspace</small></div><ChevronDown size={14}/></button>
-        <nav className="sidebar-nav">{nav.map(({ view: item, label, icon: Icon, badge }) => <button key={item} className={view === item ? "active" : ""} onClick={() => { setView(item); setMobileOpen(false); }}><Icon size={15}/><span>{label}</span>{badge && <b>{badge}</b>}</button>)}</nav>
+        <nav className="sidebar-nav">{nav.map(({ view: item, label, icon: Icon, badge }) => <button key={item} className={view === item ? "active" : ""} onClick={() => { setView(item); setMobileOpen(false); }}><Icon size={15}/><span>{label}</span>{badge && <b>{item === "inbox" ? ticketList.length : badge}</b>}</button>)}</nav>
         <p className="nav-section">OPERATIONS</p>
         <nav className="sidebar-nav">{opsNav.map(({ view: item, label, icon: Icon }) => <button key={item} className={view === item ? "active" : ""} onClick={() => { setView(item); setMobileOpen(false); }}><Icon size={15}/><span>{label}</span></button>)}</nav>
         <div className="queue-health"><div><span><Activity size={13}/> Queue health</span><strong>92</strong></div><i><b/></i><p>3 tickets at risk. Automation delivery is healthy.</p><button onClick={() => setView("reliability")}>View operations <ArrowRight size={11}/></button></div>
@@ -90,7 +124,7 @@ export function RelayWorkspace() {
         <section className={`relay-content ${view === "inbox" ? "inbox-content" : ""}`}>
           {view !== "inbox" && <PageHeader view={view} onNew={() => setNewTicketOpen(true)} />}
           {view === "overview" && <Overview tickets={ticketList} onSelect={selectTicket} onView={setView} />}
-          {view === "inbox" && <InboxView tickets={ticketList} active={activeTicket} onSelect={(id) => { setActiveId(id); setDraft(""); }} onNew={() => setNewTicketOpen(true)} copilotOpen={copilotOpen} setCopilotOpen={setCopilotOpen} drafting={drafting} draft={draft} setDraft={setDraft} generateDraft={generateDraft} sendDraft={sendDraft} changeStatus={changeStatus} />}
+          {view === "inbox" && <InboxView key={ticketList.length} tickets={ticketList} active={activeTicket} onSelect={setActiveId} onNew={() => setNewTicketOpen(true)} copilotOpen={copilotOpen} setCopilotOpen={setCopilotOpen} drafting={drafting} draft={draft} setDraft={setDraft} generateDraft={generateDraft} sendDraft={sendDraft} changeStatus={changeStatus} />}
           {view === "queues" && <Queues tickets={ticketList} onSelect={selectTicket} />}
           {view === "knowledge" && <Knowledge onOpen={setActiveArticle} />}
           {view === "customers" && <Customers tickets={ticketList} onSelect={selectTicket} />}
@@ -101,7 +135,7 @@ export function RelayWorkspace() {
       </main>
 
       {searchOpen && <SearchModal tickets={ticketList} close={() => setSearchOpen(false)} select={(ticket) => { selectTicket(ticket); setSearchOpen(false); }} />}
-      {newTicketOpen && <NewTicketModal close={() => setNewTicketOpen(false)} notify={notify} />}
+      {newTicketOpen && <NewTicketModal close={() => setNewTicketOpen(false)} createTicket={createTicket} />}
       {activeArticle && <ArticleDrawer article={activeArticle} close={() => setActiveArticle(null)} />}
       {toast && <div className="relay-toast"><CheckCircle2 size={16}/>{toast}</div>}
     </div>
@@ -116,7 +150,7 @@ function Overview({ tickets, onSelect, onView }: { tickets: Ticket[]; onSelect: 
   const risk = tickets.filter((ticket) => ticket.priority === "urgent" || ticket.priority === "high");
   return <div className="overview-view">
     <div className="support-metrics">
-      <Metric icon={Inbox} label="Open conversations" value="38" change="-8.2%" detail="vs. last week" positive />
+      <Metric icon={Inbox} label="Open conversations" value={String(tickets.filter((ticket) => ticket.status !== "resolved" && ticket.status !== "closed").length)} change="-8.2%" detail="vs. last week" positive />
       <Metric icon={Clock3} label="Median first response" value="6m 42s" change="-1m 18s" detail="faster" positive />
       <Metric icon={CheckCircle2} label="Resolution rate" value="84.6%" change="+4.3%" detail="this month" positive />
       <Metric icon={ThumbsUp} label="Customer satisfaction" value="4.8 / 5" change="+0.2" detail="from 186 ratings" positive />
@@ -161,7 +195,7 @@ function InboxView({ tickets, active, onSelect, onNew, copilotOpen, setCopilotOp
       </div>
       <div className="tickets-scroll">{visibleTickets.length ? visibleTickets.map((ticket,index)=><button key={ticket.id} aria-current={active.id === ticket.id ? "true" : undefined} className={`ticket-row ${active.id === ticket.id ? "active" : ""}`} onClick={() => { onSelect(ticket.id); setMobileList(false); }}><Avatar initials={ticket.initials} index={index}/><div><div><strong>{ticket.customer}</strong><time>{ticket.updated}</time></div><h3>{ticket.subject}</h3><p>{ticket.preview}</p><span><i className={`channel ${ticket.channel}`}/>{ticket.company}</span>{ticket.priority !== "normal" && ticket.priority !== "low" && <b className={`priority ${ticket.priority}`}>{ticket.priority}</b>}</div></button>) : <div className="inbox-empty"><Search size={24}/><h3>No matching conversations</h3><p>Try another name or ticket ID, or clear your filters.</p><button type="button" onClick={resetFilters}>Clear filters</button></div>}</div>
     </aside>
-    <section className="conversation"><header className="conversation-head"><div><button className="inbox-back" aria-label="Back to inbox" onClick={() => setMobileList(true)}><ArrowLeft size={18}/></button><div><span>{active.id}</span><h2>{active.subject}</h2><p>{active.customer} · {active.company}</p></div></div><div><button className="icon-action"><MoreHorizontal size={15}/></button><select value={active.status} onChange={(event) => changeStatus(event.target.value as TicketStatus)} aria-label="Ticket status">{Object.entries(statusLabel).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><button className="resolve-button" onClick={() => changeStatus("resolved")}><Check size={13}/>Resolve</button></div></header><div className="conversation-meta"><span className={`priority ${active.priority}`}>{active.priority}</span><span><Clock3 size={11}/>SLA {active.sla}</span><span><Tag size={11}/>{active.tags.join(" · ")}</span><button><Avatar initials="EE" small/>{active.assignee}<ChevronDown size={10}/></button></div><div className="message-stream">{active.messages.map((message,index)=><div key={message.id} className={`message ${message.role}`}><div>{message.role === "system" ? <Bot size={13}/> : <Avatar initials={message.role === "agent" ? "EE" : active.initials} index={message.role === "agent" ? 0 : index}/>}</div><section><div><strong>{message.author}</strong><time>{message.time}</time></div><p>{message.body}</p>{message.role === "agent" && <small><CheckCheck/>Delivered</small>}</section></div>)}</div><div className="composer"><div className="composer-tabs"><button className="active">Reply</button><button>Internal note</button><span/><button onClick={() => setCopilotOpen(!copilotOpen)}><Sparkles size={12}/>Copilot</button></div>{drafting ? <div className="draft-loading"><Sparkles size={15}/><span>Relay is grounding a response in customer history and 3 knowledge sources…</span></div> : <textarea aria-label="Reply to customer" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a reply, or ask Relay to draft one…"/>}<div className="composer-actions"><div><button><Paperclip size={14}/></button><button><BookOpen size={14}/></button><button><Command size={14}/></button></div>{!draft && !drafting ? <button className="draft-button" onClick={generateDraft}><WandSparkles size={13}/>Draft with Relay</button> : <button className="send-button" onClick={sendDraft} disabled={drafting || !draft.trim()}><Send size={13}/>Send reply</button>}</div></div></section>
+    <section className="conversation"><header className="conversation-head"><div><button className="inbox-back" aria-label="Back to inbox" onClick={() => setMobileList(true)}><ArrowLeft size={18}/></button><div><span>{active.id}</span><h2>{active.subject}</h2><p>{active.customer} · {active.company}</p></div></div><div><button className="icon-action"><MoreHorizontal size={15}/></button><select value={active.status} onChange={(event) => changeStatus(event.target.value as TicketStatus)} aria-label="Ticket status">{Object.entries(statusLabel).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><button className="resolve-button" onClick={() => changeStatus("resolved")}><Check size={13}/>Resolve</button></div></header><div className="conversation-meta"><span className={`priority ${active.priority}`}>{active.priority}</span><span><Clock3 size={11}/>SLA {active.sla}</span><span><Tag size={11}/>{active.tags.join(" · ")}</span><button><Avatar initials="EE" small/>{active.assignee}<ChevronDown size={10}/></button></div><div className="message-stream">{active.messages.map((message,index)=><div key={message.id} className={`message ${message.role}`}><div>{message.role === "system" ? <Bot size={13}/> : <Avatar initials={message.role === "agent" ? "EE" : active.initials} index={message.role === "agent" ? 0 : index}/>}</div><section><div><strong>{message.author}</strong><time>{message.time}</time></div><p>{message.body}</p>{message.role === "agent" && <small><CheckCheck/>Added to demo conversation</small>}</section></div>)}</div><div className="composer"><div className="composer-tabs"><button className="active">Reply</button><button>Internal note</button><span/><button onClick={() => setCopilotOpen(!copilotOpen)}><Sparkles size={12}/>Copilot</button></div>{drafting ? <div className="draft-loading"><Sparkles size={15}/><span>Preparing a demo reply for this customer…</span></div> : <textarea aria-label="Reply to customer" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a reply, or ask Relay to draft one…"/>}<div className="composer-actions"><div><button><Paperclip size={14}/></button><button><BookOpen size={14}/></button><button><Command size={14}/></button></div>{!draft && !drafting ? <button className="draft-button" onClick={generateDraft}><WandSparkles size={13}/>Draft with Relay</button> : <button className="send-button" onClick={sendDraft} disabled={drafting || !draft.trim()}><Send size={13}/>Send reply</button>}</div></div></section>
     {copilotOpen && <aside className="copilot-panel"><div className="copilot-head"><span><Sparkles size={14}/>Relay copilot</span><button aria-label="Close copilot" onClick={() => setCopilotOpen(false)}><X size={14}/></button></div><div className="copilot-score"><div><span>AI confidence</span><strong>{active.aiConfidence}%</strong></div><i><b style={{width:`${active.aiConfidence}%`}}/></i></div><section><span>CONVERSATION BRIEF</span><p>Customer is blocked on a time-sensitive export. The failure occurs during multi-entity consolidation and has repeated three times.</p></section><section><span>RECOMMENDED ACTION</span><div className="next-action"><RefreshCw size={14}/><p><strong>Restart with entity isolation</strong><small>Similar issue resolved 18 tickets</small></p></div></section><section><span>KNOWLEDGE SOURCES</span>{["Troubleshoot report exports","Multi-entity consolidation guide","Export status runbook"].map((source,index)=><button className="source-row" key={source}><FileText size={13}/><p><strong>{source}</strong><small>{["94% match","87% match","82% match"][index]}</small></p><ExternalLink size={11}/></button>)}</section><section><span>CUSTOMER CONTEXT</span><div className="customer-mini"><Avatar initials={active.initials} index={1}/><p><strong>{active.customer}</strong><small>{active.company} · Enterprise</small></p></div><dl><div><dt>Open tickets</dt><dd>2</dd></div><div><dt>CSAT</dt><dd>4.9</dd></div><div><dt>Since</dt><dd>2024</dd></div></dl></section></aside>}
   </div>;
 }
@@ -187,5 +221,32 @@ function Automations({ rules, setRules, notify }: { rules: typeof automationRule
 function Reliability({ notify }: { notify: (text: string) => void }) { const [dlq,setDlq]=useState(2); return <div className="reliability-view"><div className="reliability-cards"><article><span className="healthy"><CheckCircle2 size={16}/></span><div><p>Event processing</p><strong>Healthy</strong><small>99.99% success</small></div></article><article><span><RefreshCw size={16}/></span><div><p>Active retries</p><strong>3</strong><small>Next attempt in 18s</small></div></article><article><span className={dlq?"danger":"healthy"}><AlertCircle size={16}/></span><div><p>Dead-letter queue</p><strong>{dlq}</strong><small>Requires review</small></div></article><article><span><Activity size={16}/></span><div><p>p95 processing</p><strong>842ms</strong><small>-14% this week</small></div></article></div><div className="reliability-grid"><article className="relay-panel delivery-log"><PanelTitle title="Delivery attempts" subtitle="Recent outbound provider operations" action="Live"/><div className="delivery-head"><span>Event</span><span>Destination</span><span>Status</span><span>Attempt</span><span>Latency</span><span>Time</span></div>{[["message.sent","Email provider","Delivered","1 / 5","284ms","12s"],["conversation.updated","Customer webhook","Delivered","3 / 5","1.2s","31s"],["message.sent","WhatsApp provider","Retrying","2 / 5","—","44s"],["ticket.assigned","Customer webhook","Delivered","1 / 5","198ms","1m"],["article.published","Search index","Delivered","1 / 5","476ms","3m"]].map(row=><div className="delivery-row" key={row[0]+row[5]}><code>{row[0]}</code><span>{row[1]}</span><span className={`delivery-state ${row[2].toLowerCase()}`}>{row[2]==="Delivered"?<Check size={10}/>:<RefreshCw size={10}/>} {row[2]}</span><span>{row[3]}</span><span>{row[4]}</span><span>{row[5]} ago</span></div>)}</article><aside className="relay-panel retry-policy"><PanelTitle title="Retry policy" subtitle="Outbound delivery defaults" action=""/><div className="policy-code"><span><b>maxAttempts</b><em>5</em></span><span><b>baseDelay</b><em>1 second</em></span><span><b>backoff</b><em>exponential</em></span><span><b>jitter</b><em>full</em></span><span><b>maxDelay</b><em>60 seconds</em></span></div><div className="retry-timeline"><span>1s</span><i/><span>2s</span><i/><span>4s</span><i/><span>8s</span><i/><span>16s</span></div><p>Retryable: 408, 409, 425, 429, and 5xx responses.</p></aside></div><article className="relay-panel dead-letter"><div className="relay-panel-title"><div><h3>Dead-letter queue</h3><p>Events that exhausted all retry attempts</p></div><span className="dlq-count">{dlq} events</span></div>{dlq>0 ? <><div className="dlq-head"><span>Event ID</span><span>Type</span><span>Destination</span><span>Last error</span><span>Failed</span><span/></div>{[["evt_8fa21","message.sent","WhatsApp","Provider account suspended","8m"],["evt_47bc9","conversation.updated","Webhook","410 Gone","21m"]].slice(0,dlq).map(row=><div className="dlq-row" key={row[0]}><code>{row[0]}</code><code>{row[1]}</code><span>{row[2]}</span><span className="error-copy">{row[3]}</span><span>{row[4]} ago</span><div><button onClick={()=>{setDlq((n)=>Math.max(0,n-1));notify(`${row[0]} replayed successfully`)}}><RefreshCw size={11}/>Replay</button><button><Ellipsis size={13}/></button></div></div>)}</> : <div className="dlq-empty"><CheckCircle2 size={20}/><strong>Dead-letter queue is clear</strong><p>All failed events have been recovered or dismissed.</p></div>}</article></div>; }
 
 function SearchModal({ tickets, close, select }: { tickets: Ticket[]; close: () => void; select: (ticket: Ticket) => void }) { const [query,setQuery]=useState(""); const results=useMemo(()=>tickets.filter(t=>`${t.subject} ${t.customer} ${t.company}`.toLowerCase().includes(query.toLowerCase())).slice(0,5),[query,tickets]); return <div className="modal-overlay" onMouseDown={close}><div className="search-modal" onMouseDown={e=>e.stopPropagation()}><div><Search size={17}/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search tickets, customers, and knowledge…"/><kbd>ESC</kbd></div><span>CONVERSATIONS</span>{results.map((ticket,index)=><button key={ticket.id} onClick={()=>select(ticket)}><Avatar initials={ticket.initials} index={index}/><p><strong>{ticket.subject}</strong><small>{ticket.id} · {ticket.customer} · {ticket.company}</small></p><ChevronRight size={13}/></button>)}</div></div>; }
-function NewTicketModal({ close, notify }: { close: () => void; notify: (text: string) => void }) { return <div className="modal-overlay" onMouseDown={close}><form className="ticket-modal" onMouseDown={e=>e.stopPropagation()} onSubmit={e=>{e.preventDefault();close();notify("New ticket RLY-1049 created")}}><header><div><span><MessageSquare size={15}/></span><h2>Create ticket</h2></div><button type="button" onClick={close}><X size={15}/></button></header><div className="ticket-form"><label>Customer<input required placeholder="Search or enter customer"/></label><label>Subject<input required placeholder="What does the customer need?"/></label><div><label>Priority<select><option>Normal</option><option>High</option><option>Urgent</option><option>Low</option></select></label><label>Channel<select><option>Email</option><option>Chat</option><option>WhatsApp</option><option>API</option></select></label></div><label>Message<textarea required placeholder="Add the customer’s message or context…"/></label><label>Assign to<select><option>Unassigned</option><option>Emmanuel Emirex</option><option>Maya Kim</option><option>Amara Ode</option></select></label></div><footer><button type="button" className="relay-button secondary" onClick={close}>Cancel</button><button className="relay-button primary">Create ticket</button></footer></form></div>; }
+function NewTicketModal({ close, createTicket }: { close: () => void; createTicket: (form: FormData) => void }) {
+  const [error, setError] = useState("");
+  return <div className="modal-overlay" onMouseDown={close}>
+    <form className="ticket-modal" style={{ maxHeight: "calc(100dvh - 60px)", overflowY: "auto" }} role="dialog" aria-modal="true" aria-labelledby="new-ticket-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => {
+      event.preventDefault();
+      setError("");
+      try { createTicket(new FormData(event.currentTarget)); }
+      catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to create the ticket. Please check the fields."); }
+    }}>
+      <header><div><span><MessageSquare size={15}/></span><h2 id="new-ticket-title">Create ticket</h2></div><button type="button" aria-label="Close create ticket" onClick={close}><X size={15}/></button></header>
+      <div className="ticket-form">
+        <label>Customer<input name="customer" required maxLength={120} autoFocus placeholder="Customer name"/></label>
+        <label>Company (optional)<input name="company" maxLength={120} placeholder="Company or account"/></label>
+        <label>Subject<input name="subject" required maxLength={200} placeholder="What does the customer need?"/></label>
+        <div>
+          <label>Priority<select name="priority" defaultValue="normal"><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option><option value="low">Low</option></select></label>
+          <label>Channel<select name="channel" defaultValue="email"><option value="email">Email</option><option value="chat">Chat</option><option value="whatsapp">WhatsApp</option><option value="api">API</option></select></label>
+        </div>
+        <label>Message<textarea name="message" required maxLength={10000} placeholder="Add the customer’s message or context…"/></label>
+        <label>Assign to<select name="assignee" defaultValue="Unassigned"><option value="Unassigned">Unassigned</option><option value="Emmanuel">Emmanuel Emirex</option><option value="Maya">Maya Kim</option><option value="Amara">Amara Ode</option></select></label>
+        {error && <p role="alert">{error}</p>}
+        <small>Tickets and replies stay in this demo session and reset when you reload.</small>
+      </div>
+      <footer><button type="button" className="relay-button secondary" onClick={close}>Cancel</button><button type="submit" className="relay-button primary">Create ticket</button></footer>
+    </form>
+  </div>;
+}
+
 function ArticleDrawer({ article, close }: { article: (typeof knowledgeArticles)[number]; close: () => void }) { return <div className="drawer-overlay" onMouseDown={close}><aside className="article-drawer" onMouseDown={e=>e.stopPropagation()}><header><span>KNOWLEDGE ARTICLE</span><button onClick={close}><X size={15}/></button></header><div className="article-drawer-body"><div className="article-icon"><FileText size={20}/></div><h2>{article.title}</h2><div className="article-meta"><span className={`article-status ${article.status.toLowerCase()}`}>{article.status}</span><span>{article.collection}</span><span>Updated {article.updated}</span></div><div className="article-performance"><div><strong>{article.uses}</strong><span>AI uses</span></div><div><strong>{article.helpful || "—"}{article.helpful ? "%" : ""}</strong><span>Helpful</span></div><div><strong>3m</strong><span>Read time</span></div></div><h3>Overview</h3><p>This runbook helps support teams diagnose the issue, collect the right context, and guide customers toward a reliable resolution.</p><h3>Resolution steps</h3><ol><li>Confirm the affected workspace, time range, and most recent attempt.</li><li>Check the operation status and identify the failing processing stage.</li><li>Retry only the failed stage using the same idempotency key.</li><li>Verify the output before sharing the result with the customer.</li></ol><div className="grounding-note"><Sparkles size={15}/><p><strong>Used by Relay</strong><span>Answers grounded in this article show the source to agents before sending.</span></p></div><div className="drawer-actions"><button className="relay-button secondary"><Copy size={13}/>Copy link</button><button className="relay-button primary">Edit article</button></div></div></aside></div>; }

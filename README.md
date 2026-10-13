@@ -7,7 +7,7 @@
 ![Next.js](https://img.shields.io/badge/Next.js-16-111111?logo=nextdotjs)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3FCF8E?logo=supabase&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-9%20passing-238c80)
+[![CI](https://github.com/eemirex/dynamis-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/eemirex/dynamis-relay/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-7069EF)
 
 ## Overview
@@ -19,6 +19,17 @@ Relay combines a shared inbox, customer context, AI-assisted drafting, a trusted
 The public deployment is a credential-free interactive demo. The repository also includes a production-shaped backend foundation with Supabase authentication, multi-tenant PostgreSQL and RLS, signed inbound webhooks, an idempotent message processor, a transactional outbox, explicit ticket transitions, and server-only AI routes.
 
 > Every customer, company, ticket, statistic, and activity in the demo is fictional.
+
+### Try the demo ticket workflow
+
+1. Open the workspace and create a ticket with a customer, subject, message, priority, channel, and assignee.
+2. The ticket appears in the inbox with a unique reference and its initial customer message.
+3. Write a reply, switch to another conversation, and return: each ticket keeps its own unsent draft.
+4. Generate a demo reply and switch tickets before it finishes. The result stays with the originating ticket.
+5. Send a reply to append it to that conversation and clear only its draft.
+
+Demo replies are deterministic templates based on the selected customer and subject; they do not call an AI provider or claim a completed fix. Tickets, drafts, and replies stay in memory and reset on reload. No external customer message is sent.
+
 
 ## Product capabilities
 
